@@ -1,0 +1,120 @@
+---
+title: "Untitled"
+author: "Kritika"
+date: "2026-03-10"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r median_inter_target_time_lab, message=FALSE, warning=FALSE}
+
+library(dplyr)
+library(ggplot2)
+library(stringr)
+
+# -----------------------------
+# Folder paths
+# -----------------------------
+
+lab_single_path <- "/home/kritika/MTech/Sem4/BRSM/Project/Attention Task Validation/data_brsm/single/lab"
+lab_multiple_path <- "/home/kritika/MTech/Sem4/BRSM/Project/Attention Task Validation/data_brsm/multiple/lab"
+
+# -----------------------------
+# Get CSV files
+# -----------------------------
+
+single_files <- list.files(lab_single_path, pattern="*.csv", full.names=TRUE)
+multiple_files <- list.files(lab_multiple_path, pattern="*.csv", full.names=TRUE)
+
+# -----------------------------
+# Safe reader
+# -----------------------------
+
+read_safe <- function(file){
+
+  df <- read.csv(file,
+                 stringsAsFactors = FALSE,
+                 colClasses = "character")
+
+  df <- df[!is.na(df$mouse.time), ]
+
+  df$time_ms <- as.numeric(str_extract(df$mouse.time, "[0-9.]+")) * 1000
+  df$level <- as.numeric(df$trials.thisN) + 1
+
+  return(df)
+}
+
+# -----------------------------
+# Load files
+# -----------------------------
+
+lab_single <- bind_rows(lapply(single_files, read_safe))
+lab_multiple <- bind_rows(lapply(multiple_files, read_safe))
+
+lab_single$TaskType <- "Single"
+lab_multiple$TaskType <- "Multiple"
+
+lab_data <- bind_rows(lab_single, lab_multiple)
+
+# -----------------------------
+# Compute inter-target times
+# -----------------------------
+
+lab_data <- lab_data %>%
+  arrange(level, time_ms) %>%
+  group_by(level) %>%
+  mutate(inter_target_time = time_ms - lag(time_ms)) %>%
+  ungroup()
+
+# -----------------------------
+# Median inter-target time
+# -----------------------------
+
+median_inter_target <- lab_data %>%
+  group_by(TaskType, level) %>%
+  summarise(
+    MedianInterTargetTime = median(inter_target_time, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# -----------------------------
+# Single target = 0
+# -----------------------------
+
+median_inter_target$MedianInterTargetTime[
+  median_inter_target$TaskType == "Single"
+] <- 0
+
+# -----------------------------
+# Plot
+# -----------------------------
+
+ggplot(median_inter_target,
+       aes(x = level,
+           y = MedianInterTargetTime,
+           color = TaskType)) +
+
+  geom_line(size = 1.2) +
+  geom_point(size = 3) +
+
+  labs(
+    title = "Median Inter-Target Time Across Trial (Lab Task)",
+    x = "Trial Number",
+    y = "Median Inter-Target Time (ms)",
+    color = "Task Type"
+  ) +
+
+  scale_color_manual(values = c("#E64B35", "#4DBBD5")) +
+
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5)
+  )
+
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

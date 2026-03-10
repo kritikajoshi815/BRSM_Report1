@@ -1,0 +1,127 @@
+---
+title: "TargetColourVsReactionTimeVisualization"
+author: "Kritika"
+date: "2026-03-10"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r rt_color_condition_plot, message=FALSE, warning=FALSE}
+
+
+# Load required libraries
+# ggplot2 -> plotting
+# dplyr -> data manipulation
+# stringr -> string extraction
+library(ggplot2)
+library(dplyr)
+library(stringr)
+
+# -----------------------------
+# Folder paths
+# -----------------------------
+# Define paths where participant CSV files are stored
+# Separate folders exist for single-target and multiple-target lab data
+
+lab_single_path <- "/home/kritika/MTech/Sem4/BRSM/Project/Attention Task Validation/data_brsm/single/lab"
+lab_multiple_path <- "/home/kritika/MTech/Sem4/BRSM/Project/Attention Task Validation/data_brsm/multiple/lab"
+
+# -----------------------------
+# Get CSV files
+# -----------------------------
+# Retrieve all CSV files present in the folders
+# full.names = TRUE returns complete file paths
+
+single_files <- list.files(lab_single_path, pattern="*.csv", full.names=TRUE)
+multiple_files <- list.files(lab_multiple_path, pattern="*.csv", full.names=TRUE)
+
+# -----------------------------
+# Safe reader
+# -----------------------------
+# Function to safely read participant files and extract reaction time
+
+read_safe <- function(file){
+
+  # Read CSV while keeping columns as character to avoid parsing issues
+  df <- read.csv(file,
+                 stringsAsFactors = FALSE,
+                 colClasses = "character")
+
+  # Remove rows where mouse.time is missing
+  df <- df[!is.na(df$mouse.time), ]
+
+  # Extract numeric reaction time from mouse.time column
+  # Convert seconds to milliseconds
+  df$IRT <- as.numeric(str_extract(df$mouse.time, "[0-9.]+")) * 1000
+
+  return(df)
+}
+
+# -----------------------------
+# Load all participant files
+# -----------------------------
+# Apply the safe reader to all files and combine them into one dataset
+
+lab_single <- bind_rows(lapply(single_files, read_safe))
+lab_multiple <- bind_rows(lapply(multiple_files, read_safe))
+
+# Add condition labels for later comparison
+lab_single$Condition <- "Single Target"
+lab_multiple$Condition <- "Multiple Target"
+
+# Combine both conditions into one dataset
+lab_data <- bind_rows(lab_single, lab_multiple)
+
+# -----------------------------
+# Remove extreme RT values
+# -----------------------------
+# Filter out extremely fast or slow responses
+# (<200 ms likely anticipatory responses, >5000 ms likely distractions)
+
+lab_data <- lab_data %>%
+  filter(IRT > 200 & IRT < 5000)
+
+# -----------------------------
+# Median RT by color
+# -----------------------------
+# Calculate median reaction time for each target color
+# separately for single-target and multiple-target conditions
+
+color_summary <- lab_data %>%
+  group_by(Condition, target_col) %>%
+  summarise(
+    median_RT = median(IRT, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# -----------------------------
+# Plot grouped bar chart
+# -----------------------------
+# Visualize median RT for each color across conditions
+
+ggplot(color_summary,
+       aes(x = target_col,
+           y = median_RT,
+           fill = Condition)) +
+
+  geom_bar(stat = "identity",
+           position = position_dodge(),
+           width = 0.7) +
+
+  labs(
+    title = "Median Reaction Time by Target Color and Condition",
+    x = "Target Color",
+    y = "Median Reaction Time (ms)"
+  ) +
+
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5)
+  )
+```
+
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

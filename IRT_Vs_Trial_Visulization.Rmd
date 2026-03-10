@@ -1,0 +1,105 @@
+---
+title: "Untitled"
+author: "Kritika"
+date: "2026-03-04"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r rt_trial_learning_plot, message=FALSE, warning=FALSE}
+
+library(ggplot2)
+library(dplyr)
+library(stringr)
+
+# -----------------------------
+# Folder paths
+# -----------------------------
+
+lab_single_path <- "/home/kritika/MTech/Sem4/BRSM/Project/Attention Task Validation/data_brsm/single/lab"
+lab_multiple_path <- "/home/kritika/MTech/Sem4/BRSM/Project/Attention Task Validation/data_brsm/multiple/lab"
+
+# -----------------------------
+# Get all CSV files
+# -----------------------------
+
+single_files <- list.files(lab_single_path, pattern="*.csv", full.names=TRUE)
+multiple_files <- list.files(lab_multiple_path, pattern="*.csv", full.names=TRUE)
+
+# -----------------------------
+# Function to safely read files
+# -----------------------------
+
+read_safe <- function(file){
+
+  df <- read.csv(file,
+                 stringsAsFactors = FALSE,
+                 colClasses = "character")
+
+  # remove rows with missing mouse time
+  df <- df[!is.na(df$mouse.time),]
+
+  # extract first timestamp from mouse.time
+  df$IRT <- as.numeric(str_extract(df$mouse.time, "[0-9.]+")) * 1000
+
+  # create trial number
+  df$trial <- 1:nrow(df)
+
+  return(df)
+}
+
+# -----------------------------
+# Load all participant files
+# -----------------------------
+
+lab_single <- bind_rows(lapply(single_files, read_safe))
+lab_multiple <- bind_rows(lapply(multiple_files, read_safe))
+
+lab_single$Condition <- "Single Target"
+lab_multiple$Condition <- "Multiple Target"
+
+lab_data <- bind_rows(lab_single, lab_multiple)
+
+# -----------------------------
+# Remove extreme outliers (optional but recommended)
+# -----------------------------
+
+lab_data <- lab_data %>%
+  filter(IRT > 200 & IRT < 5000)
+
+# -----------------------------
+# Compute median RT per trial
+# -----------------------------
+
+trial_summary <- lab_data %>%
+  group_by(Condition, trial) %>%
+  summarise(
+    median_RT = median(IRT, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# -----------------------------
+# Plot Learning / Fatigue Curve
+# -----------------------------
+
+ggplot(trial_summary, aes(x = trial, y = median_RT, color = Condition)) +
+  geom_line(size = 1.2) +
+  geom_point(size = 3) +
+  labs(
+    title = "Reaction Time vs Trial Number (Learning Effect)",
+    x = "Trial Number",
+    y = "Median Initial Response Time (ms)"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5)
+  )
+
+
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
