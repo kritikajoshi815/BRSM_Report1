@@ -1,0 +1,186 @@
+---
+title: "BRSM Report 1 - Data Visualization"
+output:
+  word_document:
+    toc: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo    = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.align = "center",
+  fig.width = 8,
+  fig.height = 5,
+  dpi = 150
+)
+```
+
+```{r packages}
+library(tidyverse)
+library(ggplot2)
+library(dplyr)
+library(stringr)
+```
+
+```{r load-cleaned}
+data_list <- readRDS("cleaned_data.rds")
+
+lab_multi_clean    <- data_list$lab_multi_clean
+lab_single_clean   <- data_list$lab_single_clean
+phone_multi_clean  <- data_list$phone_multi_clean
+phone_single_clean <- data_list$phone_single_clean
+
+# Ensure all key columns are numeric
+lab_multi_clean$irt_ms  <- as.numeric(lab_multi_clean$irt_ms)
+lab_single_clean$irt_ms <- as.numeric(lab_single_clean$irt_ms)
+
+phone_multi_clean  <- phone_multi_clean  %>%
+  mutate(across(c(irt_ms, false_alarms, hit_rate, avg_inter_ms, Level), as.numeric))
+phone_single_clean <- phone_single_clean %>%
+  mutate(across(c(irt_ms, false_alarms, hit_rate, avg_inter_ms, Level), as.numeric))
+
+# Combined dataset: all 4 groups for IRT figures
+combined_irt <- bind_rows(
+  lab_single_clean   %>% select(participant_id, irt_ms) %>%
+    mutate(Group = "Lab\nSingle",    Platform = "Lab",   Condition = "Single"),
+  lab_multi_clean    %>% select(participant_id, irt_ms) %>%
+    mutate(Group = "Lab\nMultiple",  Platform = "Lab",   Condition = "Multiple"),
+  phone_single_clean %>% select(participant_id, irt_ms) %>%
+    mutate(Group = "Phone\nSingle",  Platform = "Phone", Condition = "Single"),
+  phone_multi_clean  %>% select(participant_id, irt_ms) %>%
+    mutate(Group = "Phone\nMultiple",Platform = "Phone", Condition = "Multiple")
+) %>% filter(!is.na(irt_ms))
+
+# Combined phone dataset 
+phone_combined <- bind_rows(
+  phone_single_clean %>% mutate(Condition = "Single"),
+  phone_multi_clean  %>% mutate(Condition = "Multiple")
+)
+```
+
+```{r theme}
+theme_brsm <- theme_classic() +
+  theme(
+    plot.title      = element_text(face = "bold", size = 13),
+    plot.subtitle   = element_text(size = 10, color = "grey40"),
+    axis.title      = element_text(size = 11),
+    strip.text      = element_text(face = "bold"),
+    legend.position = "bottom"
+  )
+
+dir.create("figures", showWarnings = FALSE)
+```
+
+
+# Figure 1 — IRT Distribution Shape (Histograms, All 4 Groups)
+
+```{r fig1, fig.height=6}
+if (!dir.exists("figures")) {
+  dir.create("figures")
+}
+p1 <- ggplot(combined_irt, aes(x = irt_ms, fill = Group)) +
+  geom_histogram(bins = 30, color = "white", alpha = 0.85) +
+  facet_wrap(~Group, scales = "free") +
+  labs(
+    title = "Distribution of Initial Response Time (IRT) by Group",
+    x     = "Initial Response Time (ms)",
+    y     = "Count"
+  ) +
+  theme_brsm + theme(legend.position = "none")
+
+p1
+ggsave("figures/fig1_irt_histogram.jpeg", plot = p1,
+       width = 9, height = 6, dpi = 150)
+```
+
+**Interpretation:** All four groups show right-skewed IRT distributions, most responses
+are fast but a small number of trials produce very long latencies. This is typical of
+reaction time data and justifies using the median as the measure of central tendency.
+Phone-Single shows the widest spread (up to 14,711 ms), while both lab conditions are
+tightly concentrated between 800-2,000 ms, reflecting the controlled laboratory
+environment.
+
+---
+
+# Figure 2 — IRT Spread and Outliers (Box Plots, All 4 Groups)
+
+```{r fig2}
+p2 <- ggplot(combined_irt, aes(x = Group, y = irt_ms, fill = Group)) +
+  geom_boxplot(outlier.shape = 21, outlier.size = 2, alpha = 0.8) +
+  labs(
+    title = "IRT Spread and Outliers by Group",
+    x     = "Group",
+    y     = "Initial Response Time (ms)"
+  ) +
+  theme_brsm + theme(legend.position = "none")
+
+p2
+ggsave("figures/fig2_irt_boxplot.jpeg", plot = p2,
+       width = 7, height = 5, dpi = 150)
+```
+
+**Interpretation:** Lab-Single (1,440 ms) and Lab-Multiple (1,419 ms) medians are nearly
+identical, target number didn't substantially change central IRT in the lab.
+Phone-Multiple is similarly compact (median ~1,449 ms), but Phone-Single stands out with
+a higher median (~2,028 ms) and far more extreme outliers, suggesting that finding a lone
+target on a small touchscreen is sporadically very difficult.
+
+---
+
+# Figure 3 — Full IRT Distribution by Platform and Condition (Violin + Jitter)
+
+```{r fig3}
+p3 <- ggplot(combined_irt, aes(x = Condition, y = irt_ms, fill = Platform)) +
+  geom_violin(trim = FALSE, alpha = 0.6, position = position_dodge(0.8)) +
+  geom_jitter(aes(color = Platform),
+              position = position_jitterdodge(0.2), size = 0.8, alpha = 0.4) +
+  stat_summary(fun = mean, geom = "point", shape = 23, size = 3,
+               position = position_dodge(0.8), color = "black", fill = "white") +
+  labs(
+    title    = "IRT Full Distribution by Platform and Condition",
+    subtitle = "Diamond = Mean; dots = individual trials/sessions",
+    x        = "Condition",
+    y        = "Initial Response Time (ms)"
+  ) +
+  theme_brsm
+
+p3
+ggsave("figures/fig3_irt_violin.jpeg", plot = p3,
+       width = 8, height = 5, dpi = 150)
+```
+
+**Interpretation:** Lab distributions (red) are narrow and similarly shaped in both
+conditions. The phone single-target violin (teal, right panel) has a dramatically wider
+body with a long upper tail, while the phone multiple-target violin is comparatively
+compact. This reveals a platform × condition interaction: high variability is specific to
+phone + single-target, not to the phone platform in general. The mean (diamond) lies
+above the median in all groups, confirming right skew.
+
+---
+
+# Figure 4 — False Alarm Distribution by Condition (Phone)
+
+```{r fig4}
+p4 <- ggplot(phone_combined, aes(x = false_alarms, fill = Condition)) +
+  geom_histogram(binwidth = 1, position = "dodge",
+                 color = "white", alpha = 0.85) +
+  labs(
+    title = "Distribution of False Alarms by Condition (Phone)",
+    x     = "Number of False Alarms",
+    y     = "Count"
+  ) +
+  theme_brsm
+
+p4
+ggsave("figures/fig4_fa_histogram.jpeg", plot = p4,
+       width = 7, height = 5, dpi = 150)
+```
+
+**Interpretation:** Both conditions show strongly zero-inflated false alarm distributions,
+the overwhelming majority of sessions produced zero false alarms. The multiple-target
+condition has a heavier right tail (mean = 0.61 vs 0.21 for single-target), with more
+sessions recording 1–5 false alarms. This partially supports H4: while false alarms are
+rare overall, they are more frequent under higher attentional load.
+

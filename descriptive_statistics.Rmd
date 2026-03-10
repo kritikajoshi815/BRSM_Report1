@@ -1,0 +1,249 @@
+---
+title: 'BRSM Report 1 – Descriptive Statistics'
+output:
+  word_document:
+    toc: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo    = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.align = "center",
+  fig.width = 8,
+  fig.height = 5,
+  dpi = 150
+)
+```
+
+```{r packages}
+library(tidyverse)
+library(ggplot2)
+library(dplyr)
+library(readr)
+library(stringr)
+library(moments)   # skewness(), kurtosis()
+library(knitr)
+library(kableExtra)
+```
+
+---
+
+# Step 1: Load Data
+
+```{r load-data}
+path_lab_multi    <- "/home/akhila/Downloads/brsm pro/Attention Task Validation/data_brsm/multiple/lab/"
+path_lab_single   <- "/home/akhila/Downloads/brsm pro/Attention Task Validation/data_brsm/single/lab/"
+path_phone_multi  <- "/home/akhila/Downloads/brsm pro/Attention Task Validation/data_brsm/multiple/phone/"
+path_phone_single <- "/home/akhila/Downloads/brsm pro/Attention Task Validation/data_brsm/single/phone/"
+
+load_lab <- function(folder_path, cond_label) {
+  files <- list.files(folder_path, pattern = "*.csv", full.names = TRUE)
+  lapply(files, function(f) {
+    df  <- read_csv(f, show_col_types = FALSE)
+    df  <- dplyr::mutate(df, across(everything(), as.character))
+    pid <- str_extract(basename(f), "^[0-9]+")
+    df$participant_id <- as.integer(pid)
+    df$source    <- "lab"
+    df$condition <- cond_label
+    df
+  }) |> bind_rows()
+}
+
+load_phone <- function(folder_path, cond_label) {
+  files <- list.files(folder_path, pattern = "*.csv", full.names = TRUE)
+  lapply(files, function(f) {
+    df  <- read_csv(f, show_col_types = FALSE)
+    df  <- dplyr::mutate(df, across(everything(), as.character))
+    pid <- str_extract(basename(f), "^[0-9]+")
+    df$participant_id <- as.integer(pid)
+    df$source    <- "phone"
+    df$condition <- cond_label
+    df
+  }) |> bind_rows()
+}
+
+lab_multi    <- load_lab(path_lab_multi,    "multiple")
+lab_single   <- load_lab(path_lab_single,   "single")
+phone_multi  <- load_phone(path_phone_multi,  "multiple")
+phone_single <- load_phone(path_phone_single, "single")
+
+cat("Rows loaded:\n")
+cat("  lab_multi:",    nrow(lab_multi),   "\n")
+cat("  lab_single:",   nrow(lab_single),  "\n")
+cat("  phone_multi:",  nrow(phone_multi), "\n")
+cat("  phone_single:", nrow(phone_single),"\n")
+```
+
+---
+
+# Step 2: Clean Data
+
+```{r clean-data}
+# ---- Extract IRT from lab data ----
+extract_irt_lab <- function(df) {
+  df %>%
+    filter(!is.na(`mouse.time`)) %>%
+    mutate(
+      irt_sec = as.numeric(str_extract(as.character(`mouse.time`), "[0-9]+\\.[0-9]+")),
+      irt_ms  = irt_sec * 1000
+    )
+}
+
+lab_multi_clean  <- extract_irt_lab(lab_multi)
+lab_single_clean <- extract_irt_lab(lab_single)
+
+# Ensure numeric
+lab_multi_clean$irt_ms  <- as.numeric(lab_multi_clean$irt_ms)
+lab_single_clean$irt_ms <- as.numeric(lab_single_clean$irt_ms)
+
+# ---- Rename phone columns ----
+rename_phone <- function(df) {
+  df %>%
+    rename(
+      irt_ms       = `InitialResponseTime(ms)`,
+      avg_inter_ms = `AvgInterTargetTime(ms)`,
+      success_rate = `SuccessRate(%)`,
+      hit_rate     = `HitRate(%)`,
+      false_alarms = `FalseAlarms`,
+      final_score  = `FinalScore`,
+      completed    = `Completed`
+    ) %>%
+    mutate(across(c(irt_ms, false_alarms, hit_rate,
+                    avg_inter_ms, final_score, Level), as.numeric))
+}
+
+phone_multi_clean  <- rename_phone(phone_multi)
+phone_single_clean <- rename_phone(phone_single)
+
+cat("Clean rows:\n")
+cat("  lab_multi_clean:",   nrow(lab_multi_clean),   "\n")
+cat("  lab_single_clean:",  nrow(lab_single_clean),  "\n")
+cat("  phone_multi_clean:", nrow(phone_multi_clean), "\n")
+cat("  phone_single_clean:",nrow(phone_single_clean),"\n")
+```
+
+---
+
+# Step 3: Missing Value Summary
+
+```{r missing-values}
+missing_summary <- data.frame(
+  Dataset      = c("Lab Multiple", "Lab Single", "Phone Multiple", "Phone Single"),
+  Total_Rows   = c(nrow(lab_multi_clean), nrow(lab_single_clean),
+                   nrow(phone_multi_clean), nrow(phone_single_clean)),
+  Missing_IRT  = c(sum(is.na(lab_multi_clean$irt_ms)),
+                   sum(is.na(lab_single_clean$irt_ms)),
+                   sum(is.na(phone_multi_clean$irt_ms)),
+                   sum(is.na(phone_single_clean$irt_ms)))
+)
+
+kable(missing_summary,
+      caption = "Missing Value Summary for IRT across Datasets") %>%
+  kable_styling(bootstrap_options = c("striped","hover","condensed"),
+                full_width = FALSE, position = "center")
+```
+
+---
+
+# Step 4: Descriptive Statistics – IRT
+
+```{r desc-irt}
+describe_irt <- function(df, label) {
+  vals <- as.numeric(df$irt_ms)
+  vals <- vals[!is.na(vals)]
+  data.frame(
+    Group     = label,
+    N         = length(vals),
+    Mean_ms   = round(mean(vals),   1),
+    Median_ms = round(median(vals), 1),
+    SD_ms     = round(sd(vals),     1),
+    Min_ms    = round(min(vals),    1),
+    Max_ms    = round(max(vals),    1),
+    IQR_ms    = round(IQR(vals),    1),
+    Skewness  = round(skewness(vals), 3),
+    Kurtosis  = round(kurtosis(vals), 3)
+  )
+}
+
+desc_irt_table <- bind_rows(
+  describe_irt(lab_single_clean,   "Lab – Single"),
+  describe_irt(lab_multi_clean,    "Lab – Multiple"),
+  describe_irt(phone_single_clean, "Phone – Single"),
+  describe_irt(phone_multi_clean,  "Phone – Multiple")
+)
+
+kable(desc_irt_table,
+      caption = "Table 1: Descriptive Statistics for Initial Response Time (ms)",
+      col.names = c("Group","N","Mean","Median","SD","Min","Max","IQR","Skewness","Kurtosis")) %>%
+  kable_styling(bootstrap_options = c("striped","hover","condensed"),
+                full_width = TRUE, position = "center")
+
+# Save for use in other Rmd files
+saveRDS(list(
+  lab_multi_clean   = lab_multi_clean,
+  lab_single_clean  = lab_single_clean,
+  phone_multi_clean = phone_multi_clean,
+  phone_single_clean= phone_single_clean
+), file = "cleaned_data.rds")
+
+cat("\nCleaned data saved to cleaned_data.rds\n")
+```
+
+---
+
+# Step 5: Descriptive Statistics – False Alarms (Phone)
+
+```{r desc-fa}
+# Build phone_combined from already-cleaned data (numeric columns guaranteed)
+phone_combined <- bind_rows(
+  phone_single_clean %>% mutate(Condition = "Single"),
+  phone_multi_clean  %>% mutate(Condition = "Multiple")
+)
+
+# Safety cast — ensures numeric even if RDS loading changed types
+phone_combined$false_alarms <- as.numeric(phone_combined$false_alarms)
+phone_combined$hit_rate      <- as.numeric(phone_combined$hit_rate)
+phone_combined$irt_ms        <- as.numeric(phone_combined$irt_ms)
+
+desc_fa <- phone_combined %>%
+  group_by(Condition) %>%
+  summarise(
+    N        = n(),
+    Mean_FA  = round(mean(false_alarms,   na.rm = TRUE), 2),
+    SD_FA    = round(sd(false_alarms,     na.rm = TRUE), 2),
+    Median   = round(median(false_alarms, na.rm = TRUE), 2),
+    Max_FA   = max(false_alarms, na.rm = TRUE),
+    .groups  = "drop"
+  )
+
+kable(desc_fa,
+      caption = "Table 2: Descriptive Statistics for False Alarms (Phone Data)") %>%
+  kable_styling(bootstrap_options = c("striped","hover","condensed"),
+                full_width = FALSE, position = "center")
+```
+
+---
+
+# Step 6: Descriptive Statistics – Hit Rate (Phone)
+
+```{r desc-hitrate}
+desc_hr <- phone_combined %>%
+  group_by(Condition) %>%
+  summarise(
+    N          = n(),
+    Mean_HR    = round(mean(hit_rate,   na.rm = TRUE), 2),
+    SD_HR      = round(sd(hit_rate,     na.rm = TRUE), 2),
+    Median_HR  = round(median(hit_rate, na.rm = TRUE), 2),
+    Min_HR     = round(min(hit_rate,    na.rm = TRUE), 2),
+    Max_HR     = round(max(hit_rate,    na.rm = TRUE), 2),
+    .groups    = "drop"
+  )
+
+kable(desc_hr,
+      caption = "Table 3: Descriptive Statistics for Hit Rate (%) by Condition (Phone Data)") %>%
+  kable_styling(bootstrap_options = c("striped","hover","condensed"),
+                full_width = FALSE, position = "center")
+```
+
