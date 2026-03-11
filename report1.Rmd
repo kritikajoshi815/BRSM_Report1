@@ -1,0 +1,372 @@
+---
+title: "Project"
+author: "S Supraja"
+date: "2026-03-04"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(readxl)
+library(dplyr)
+library(ggplot2)
+library(purrr)
+library(stringr)
+library(tidyr)
+library(readr)
+```
+
+Phone Data Analysis
+```{r}
+multiple_phone_folder_path <- "/home/supraja/BRSM/Project/Attention Task Validation/data_brsm/multiple/phone"
+single_phone_folder_path <- "/home/supraja/BRSM/Project/Attention Task Validation/data_brsm/single/phone"
+
+#get file lists separately
+multiple_phone_file_list <- list.files(multiple_phone_folder_path,
+                                       pattern = "\\.csv$",
+                                       full.names = TRUE)
+
+single_phone_file_list <- list.files(single_phone_folder_path,
+                                     pattern = "\\.csv$",
+                                     full.names = TRUE)
+
+#combine file lists correctly
+file_list <- c(multiple_phone_file_list, single_phone_file_list)
+
+#print(file_list)
+
+multiple_phone_data <- map_df(multiple_phone_file_list, function(file) {
+  df <- read_csv(file)
+  df$SourceFile <- basename(file)
+  df$TaskType <- "Multiple"
+  return(df)
+})
+
+single_phone_data <- map_df(single_phone_file_list, function(file) {
+  df <- read_csv(file)
+  df$SourceFile <- basename(file)
+  df$TaskType <- "Single"
+  return(df)
+})
+
+# Combine both datasets
+all_data <- bind_rows(multiple_phone_data, single_phone_data)
+
+#print(head(all_data))
+```
+
+```{r}
+all_data <- all_data %>%
+  mutate(
+    TaskType = as.factor(TaskType),
+    Level = as.factor(Level),
+    InitialResponseTime_ms = as.numeric(`InitialResponseTime(ms)`),
+    AvgInterTargetTime_ms = as.numeric(`AvgInterTargetTime(ms)`),
+    SuccessRate = as.numeric(`SuccessRate(%)`),
+    HitRate = as.numeric(`HitRate(%)`),
+    FalseAlarms = as.numeric(FalseAlarms)
+  )
+
+print(all_data)
+all_data <- all_data %>%
+  filter(Completed == TRUE)
+
+print(all_data)
+```
+
+Normality test
+```{r}
+shapiro.test(all_data$InitialResponseTime_ms)
+```
+
+Summary for reference
+```{r}
+summary_stats <- all_data %>%
+  group_by(TaskType, Level) %>%
+  summarise(
+    Median_RT = median(InitialResponseTime_ms, na.rm = TRUE),
+    IQR_RT = IQR(InitialResponseTime_ms, na.rm = TRUE),
+    Median_Success = median(SuccessRate, na.rm = TRUE),
+    IQR_Success = IQR(SuccessRate, na.rm = TRUE),
+    Median_FA = median(FalseAlarms, na.rm = TRUE),
+    IQR_FA = IQR(FalseAlarms, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+print(summary_stats)
+
+
+level_summary <- all_data %>%
+  group_by(Level) %>%
+  summarise(
+    Median_RT = median(InitialResponseTime_ms, na.rm = TRUE),
+    IQR_RT = IQR(InitialResponseTime_ms, na.rm = TRUE)
+  )
+
+print(level_summary)
+
+participant_summary <- all_data %>%
+  group_by(SourceFile) %>%
+  summarise(
+    median_RT = median(InitialResponseTime_ms, na.rm = TRUE),
+    median_success = median(SuccessRate, na.rm = TRUE)
+  )
+print(participant_summary)
+
+rt_by_participant <- all_data %>%
+  group_by(SourceFile, TaskType) %>%
+  summarise(
+    median_RT = median(InitialResponseTime_ms, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+```
+
+
+VISUALIZATIONS
+
+Median Initial Reaction Time Trend by Level
+```{r}
+
+rt_participant_level <- all_data %>%
+  group_by(SourceFile, TaskType, Level) %>%
+  summarise(
+    median_RT = median(InitialResponseTime_ms, na.rm = TRUE),
+    .groups = "drop"
+  )
+print(rt_participant_level)
+ggplot(rt_participant_level, aes(x = Level, y = median_RT, color = TaskType, group = TaskType)) + 
+  stat_summary(fun = median, geom = "line", linewidth = 1.2) + 
+  stat_summary(fun = median, geom = "point", size = 3) + 
+  labs(title = "Median Initial Reaction Time Trend by Level", x = "Level", y = "Median Initial Reaction Time (ms)") + 
+  theme_minimal()
+
+#per-participant median IRT (same as before, but now clean)
+rt_participant_level <- all_data %>%
+  group_by(SourceFile, TaskType, Level) %>%
+  summarise(
+    median_irt = median(InitialResponseTime_ms, na.rm = TRUE),
+    n_trials   = n(),
+    .groups    = "drop"
+  )
+
+#Summary table for quick look (median IRT + n participants per cell)
+comparison_table <- rt_participant_level %>%
+  group_by(TaskType, Level) %>%
+  summarise(
+    Median_IRT_ms   = median(median_irt, na.rm = TRUE),
+    IQR_IRT         = IQR(median_irt, na.rm = TRUE),
+    Participants    = n(),
+    .groups         = "drop"
+  )
+print(comparison_table)
+
+
+```
+Median Avg Inter-Target Time Comparison Across Levels
+```{r}
+#per-participant median AIT by Level & TaskType
+ait_participant_level <- all_data %>%
+  group_by(SourceFile, TaskType, Level) %>%
+  summarise(
+    median_ait = median(AvgInterTargetTime_ms, na.rm = TRUE),
+    n_trials   = n(),
+    .groups    = "drop"
+  )
+
+#Summary table for quick look (median AIT + n participants per cell)
+ait_comparison_table <- ait_participant_level %>%
+  group_by(TaskType, Level) %>%
+  summarise(
+    Median_AIT_ms = median(median_ait, na.rm = TRUE),
+    IQR_AIT       = IQR(median_ait, na.rm = TRUE),
+    Participants  = n(),
+    .groups       = "drop"
+  )
+
+#print(ait_comparison_table)
+
+median_iqr <- function(x) {
+  med <- median(x, na.rm = TRUE)
+  iqr <- IQR(x, na.rm = TRUE) / 2
+  data.frame(y = med, ymin = med - iqr, ymax = med + iqr)
+}
+
+ggplot(ait_participant_level, 
+       aes(x = Level, y = median_ait, color = TaskType, group = TaskType)) +
+  stat_summary(fun = median, geom = "line", linewidth = 1.2) +
+  stat_summary(fun = median, geom = "point", size = 3.5) +
+  #stat_summary(fun.data = median_iqr, geom = "errorbar", width = 0.3, alpha = 0.7) +
+  labs(title = "Avg Inter-Target Time Comparison Across Levels",
+       x = "Level",
+       y = "Median Avg Inter-Target Time (ms)",
+       color = "Task Type") +
+  theme_minimal(base_size = 14) +
+  theme(legend.position = "top")
+
+```
+
+Reaction time variability across levels
+```{r}
+rt_var <- phone_data_clean %>%
+  group_by(Level, TaskType) %>%
+  summarise(
+    sd_RT = sd(InitialResponseTime_ms, na.rm = TRUE),
+    median_RT = median(InitialResponseTime_ms, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+ggplot(rt_var, aes(Level, sd_RT)) +
+  geom_point() +
+  geom_line() +
+  geom_smooth(method = "lm", se = FALSE) +
+  facet_wrap(~TaskType) +
+  labs(
+    title = "Response Time Variability Across Difficulty Levels",
+    x = "Difficulty Level",
+    y = "SD of Initial Response Time (ms)"
+  ) +
+  theme_minimal()
+```
+
+Considering lab and phone environments for the below:
+
+Correlation Analysis 
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(corrplot)
+```
+
+
+```{r}
+
+phone_data <- all_data %>%
+  mutate(
+    DeviceType = "Phone",
+    TaskType = ifelse(GameMode == "multipleTargets", "Multiple", "Single"),
+    InitialResponseTime_ms = as.numeric(`InitialResponseTime(ms)`),
+    SourceFile = sub("_.*", "", SourceFile)
+  )
+
+multiple_lab_folder <- "/home/supraja/BRSM/Project/Attention Task Validation/data_brsm/multiple/lab"
+single_lab_folder   <- "/home/supraja/BRSM/Project/Attention Task Validation/data_brsm/single/lab"
+
+read_lab_data <- function(folder, task) {
+  
+  files <- list.files(folder, pattern="\\.csv$", full.names=TRUE)
+  
+  all_data <- lapply(files, function(file) {
+    
+    df <- read.csv(file, stringsAsFactors = FALSE)
+    
+    first_rt <- as.numeric(sub("\\[([0-9.]+).*", "\\1", df$mouse.time))
+    
+    data.frame(
+      SourceFile = sub("_.*", "", basename(file)),
+      TaskType = task,
+      DeviceType = "Lab",
+      Level = df$trials.thisN,
+      InitialResponseTime_ms = first_rt * 1000
+    )
+    
+  })
+  
+  do.call(rbind, all_data)
+}
+
+multiple_lab_data <- read_lab_data(multiple_lab_folder, "Multiple")
+#print(multiple_lab_data)
+single_lab_data   <- read_lab_data(single_lab_folder, "Single")
+#print(single_lab_data)
+
+lab_data <- bind_rows(multiple_lab_data, single_lab_data)
+
+phone_data_clean <- phone_data %>%
+  select(SourceFile, TaskType, DeviceType, Level, InitialResponseTime_ms) %>%
+  mutate(Level = as.numeric(Level))
+
+lab_data_clean <- lab_data %>%
+  select(SourceFile, TaskType, DeviceType, Level, InitialResponseTime_ms) %>%
+  mutate(Level = as.numeric(Level))
+
+combined_data <- bind_rows(phone_data_clean, lab_data_clean)
+
+combined_data <- combined_data %>%
+  mutate(Group = paste(TaskType, DeviceType, sep = "-"))
+
+rt_participant <- combined_data %>%
+  group_by(SourceFile, Group) %>%
+  summarise(
+    median_RT = median(InitialResponseTime_ms, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+rt_wide <- rt_participant %>%
+  pivot_wider(names_from = Group, values_from = median_RT)
+
+#print(rt_wide)
+
+# Single task correlation
+single_data <- rt_wide %>%
+  filter(!is.na(`Single-Lab`) & !is.na(`Single-Phone`))
+
+single_cor <- cor(single_data[,c("Single-Lab","Single-Phone")], method="spearman")[1,2]
+
+# Multiple task correlation
+multiple_data <- rt_wide %>%
+  filter(!is.na(`Multiple-Lab`) & !is.na(`Multiple-Phone`))
+
+multiple_cor <- cor(multiple_data[,c("Multiple-Lab","Multiple-Phone")], method="spearman")[1,2]
+
+cor_results <- data.frame(
+  Task = c("Single Target", "Multiple Target"),
+  Spearman_Correlation = c(single_cor, multiple_cor)
+)
+
+print(cor_results)
+
+level_rt_cor <- combined_data %>%
+  group_by(Group) %>%
+  summarise(
+    Spearman_Correlation = cor(Level, InitialResponseTime_ms,
+                               method = "spearman",
+                               use = "complete.obs"),
+    .groups = "drop"
+  )
+
+print(level_rt_cor)
+
+```
+
+Hypothesis Testing:
+
+```{r}
+#H1 test
+wilcox.test(median_RT ~ TaskType, data = rt_by_participant)
+
+#H2 test for single and multiple
+single_test  <- combined_data %>% filter(TaskType == "Single")
+multiple_test <- combined_data %>% filter(TaskType == "Multiple")
+wilcox.test(InitialResponseTime_ms ~ DeviceType, data = single_test)
+wilcox.test(InitialResponseTime_ms ~ DeviceType, data = multiple_test)
+
+#H3 test
+cor.test(lab_data_clean$Level,
+         lab_data_clean$InitialResponseTime_ms,
+         method="spearman")
+
+rt_var <- phone_data_clean %>%
+  group_by(Level) %>%
+  summarise(sd_RT = sd(InitialResponseTime_ms))
+
+#H4 test
+cor.test(rt_var$Level,
+         rt_var$sd_RT,
+         method = "spearman")
+```
+
