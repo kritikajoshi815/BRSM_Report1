@@ -1,0 +1,391 @@
+---
+title: "Report 2 - Two-Way ANOVA for Initial Response Time"
+author: "Mavericks"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+# Introduction
+
+This analysis tests whether Initial Response Time (IRT) differs as a function of:
+
+- **Platform**: Lab vs Phone  
+- **Condition**: Single vs Multiple Target  
+- **Interaction**: Whether the effect of condition depends on platform  
+
+A two-way ANOVA is conducted on **log-transformed IRT** because reaction time data are positively skewed.
+
+---
+
+```{r}
+#====================================================
+# LOAD PACKAGES
+#====================================================
+library(dplyr)
+library(ggplot2)
+
+#====================================================
+# FILE PATHS
+#====================================================
+path_multi_lab   <- "/home/kritika/MTech/Sem4/BRSM/Project/Attention Task Validation/data_brsm/multiple/lab"
+path_multi_phone <- "/home/kritika/MTech/Sem4/BRSM/Project/Attention Task Validation/data_brsm/multiple/phone"
+path_single_lab  <- "/home/kritika/MTech/Sem4/BRSM/Project/Attention Task Validation/data_brsm/single/lab"
+path_single_phone<- "/home/kritika/MTech/Sem4/BRSM/Project/Attention Task Validation/data_brsm/single/phone"
+
+#====================================================
+# READ ALL CSV FILES FROM FOLDER
+#====================================================
+read_folder_csv <- function(folder){
+
+  files <- list.files(folder, pattern="\\.csv$", full.names=TRUE)
+
+  data_list <- lapply(files, function(f){
+
+    read.csv(
+      f,
+      stringsAsFactors = FALSE,
+      colClasses = "character",
+      check.names = FALSE
+    )
+
+  })
+
+  bind_rows(data_list)
+}
+
+#====================================================
+# EXTRACT LAB IRT
+# mouse.time contains list of click times
+# Use first value and convert sec -> ms
+#====================================================
+extract_lab_irt <- function(df){
+
+  cols <- names(df)
+
+  idx <- grep("mouse.time", cols, ignore.case = TRUE)
+
+  if(length(idx) == 0){
+    stop("mouse.time column not found in lab data")
+  }
+
+  time_col <- cols[idx[1]]
+
+  cat("Using lab column:", time_col, "\n")
+
+  df %>%
+    mutate(
+      first_time = sub("^\\[\\s*([0-9.]+).*$", "\\1", .data[[time_col]]),
+      IRT = suppressWarnings(as.numeric(first_time)) * 1000
+    ) %>%
+    filter(!is.na(IRT), IRT > 0) %>%
+    select(IRT)
+}
+
+#====================================================
+# EXTRACT PHONE IRT
+# Detect InitialResponseTime column robustly
+#====================================================
+extract_phone_irt <- function(df){
+
+  cols <- names(df)
+
+  idx <- grep("Initial.*Response.*Time", cols, ignore.case = TRUE)
+
+  if(length(idx) == 0){
+    print(cols)
+    stop("Phone IRT column not found")
+  }
+
+  time_col <- cols[idx[1]]
+
+  cat("Using phone column:", time_col, "\n")
+
+  df %>%
+    mutate(
+      IRT = suppressWarnings(as.numeric(.data[[time_col]]))
+    ) %>%
+    filter(!is.na(IRT), IRT > 0) %>%
+    select(IRT)
+}
+
+#====================================================
+# READ + CLEAN ALL FOUR GROUPS
+#====================================================
+
+# Multiple - Lab
+multi_lab_raw <- read_folder_csv(path_multi_lab)
+
+multi_lab <- extract_lab_irt(multi_lab_raw) %>%
+  mutate(
+    Platform = "Lab",
+    Condition = "Multiple"
+  )
+
+# Multiple - Phone
+multi_phone_raw <- read_folder_csv(path_multi_phone)
+
+multi_phone <- extract_phone_irt(multi_phone_raw) %>%
+  mutate(
+    Platform = "Phone",
+    Condition = "Multiple"
+  )
+
+# Single - Lab
+single_lab_raw <- read_folder_csv(path_single_lab)
+
+single_lab <- extract_lab_irt(single_lab_raw) %>%
+  mutate(
+    Platform = "Lab",
+    Condition = "Single"
+  )
+
+# Single - Phone
+single_phone_raw <- read_folder_csv(path_single_phone)
+
+single_phone <- extract_phone_irt(single_phone_raw) %>%
+  mutate(
+    Platform = "Phone",
+    Condition = "Single"
+  )
+
+#====================================================
+# COMBINE DATA
+#====================================================
+df <- bind_rows(
+  multi_lab,
+  multi_phone,
+  single_lab,
+  single_phone
+)
+
+#====================================================
+# FINAL CLEANING
+#====================================================
+df <- df %>%
+  filter(!is.na(IRT), IRT > 0) %>%
+  mutate(
+    Platform = factor(Platform),
+    Condition = factor(Condition),
+    logIRT = log(IRT)
+  )
+
+#====================================================
+# CHECK COUNTS
+#====================================================
+table(df$Platform, df$Condition)
+
+head(df)
+summary(df)
+```
+
+
+```{r}
+df <- bind_rows(multi_lab, multi_phone, single_lab, single_phone)
+
+df <- df %>%
+  filter(!is.na(IRT), IRT > 0) %>%
+  mutate(
+    Platform = factor(Platform),
+    Condition = factor(Condition),
+    logIRT = log(IRT)
+  )
+
+head(df)
+summary(df)
+```
+
+
+
+```{r}
+table(df$Platform, df$Condition)
+```
+Visualisation
+```{r}
+ggplot(df, aes(x=Condition, y=IRT, fill=Platform)) +
+  geom_boxplot(alpha=.7) +
+  facet_wrap(~Platform) +
+  labs(
+    title="Initial Response Time by Platform and Condition",
+    y="IRT (ms)",
+    x="Condition"
+  ) +
+  theme_minimal()
+```
+
+
+One-Way ANOVA
+
+```{r}
+#=========================================
+# ONE-WAY ANOVA ACROSS FOUR GROUPS
+#=========================================
+
+# Create combined 4-level group variable
+df <- df %>%
+  mutate(
+    Group = interaction(Platform, Condition, sep = "_")
+  )
+
+# Check counts
+table(df$Group)
+
+# Run one-way ANOVA
+oneway_model <- aov(logIRT ~ Group, data = df)
+
+# Results
+summary(oneway_model)
+```
+A one-way ANOVA was conducted to compare log-transformed Initial Response Time across the four experimental groups (Lab-Multiple, Phone-Multiple, Lab-Single, Phone-Single). The analysis revealed a significant difference among groups, F(3, 1078) = 92.39, p < .001, indicating that response time varied across experimental conditions. To further examine whether these differences were attributable to Platform, Condition, and their interaction, a two-way factorial ANOVA was subsequently conducted.
+
+```{r}
+TukeyHSD(oneway_model)
+```
+Tukey post hoc comparisons indicated that the Phone-Single group had significantly higher response times than Lab-Multiple (p < .001), Phone-Multiple (p < .001), and Lab-Single (p < .001). No significant differences were observed among Lab-Multiple, Lab-Single, and Phone-Multiple conditions. These findings suggest that the elevated response times were primarily driven by the Phone-Single condition.
+
+
+Two-Way ANOVA
+```{r}
+anova_model <- aov(logIRT ~ Platform * Condition, data=df)
+summary(anova_model)
+```
+
+Effect Size (Eta Squared)
+```{r}
+anova_tab <- anova(anova_model)
+
+SS_total <- sum(anova_tab$"Sum Sq")
+
+eta_sq <- data.frame(
+  Effect = rownames(anova_tab),
+  SS = anova_tab$"Sum Sq",
+  Eta_Squared = anova_tab$"Sum Sq" / SS_total
+) %>%
+  filter(Effect != "Residuals")
+
+eta_sq
+```
+
+Effect Size Interpretation
+```{r}
+eta_sq <- eta_sq %>%
+  mutate(
+    Magnitude = case_when(
+      Eta_Squared >= 0.14 ~ "Large",
+      Eta_Squared >= 0.06 ~ "Medium",
+      Eta_Squared >= 0.01 ~ "Small",
+      TRUE ~ "Negligible"
+    )
+  )
+
+eta_sq
+```
+
+```{r}
+png("interaction_plot.png", width=1000, height=1000, res=300)
+
+interaction.plot(
+  x.factor = df$Condition,
+  trace.factor = df$Platform,
+  response = df$logIRT,
+  fun = mean,
+  type = "b",
+  pch = c(19,17),
+  col = c("blue","red"),
+  xlab = "Condition",
+  ylab = "Mean log(IRT)",
+  trace.label = "Platform",
+  main = "Interaction Plot"
+)
+
+dev.off()
+
+# Show in RStudio
+interaction.plot(
+  x.factor = df$Condition,
+  trace.factor = df$Platform,
+  response = df$logIRT,
+  fun = mean,
+  type = "b",
+  pch = c(19,17),
+  col = c("blue","red"),
+  xlab = "Condition",
+  ylab = "Mean log(IRT)",
+  trace.label = "Platform",
+  main = "Interaction Plot"
+)
+```
+
+Assumption Check: Residual Normality
+```{r}
+res <- residuals(anova_model)
+shapiro.test(sample(res, min(length(res), 5000)))
+```
+
+Assumption Check: Homogeneity of Variance
+```{r}
+bartlett.test(logIRT ~ interaction(Platform, Condition), data=df)
+```
+Interpretation of Results:
+
+1. Significant Platform Effect:
+   A significant main effect of Platform was observed, F(1, 1078) = 163.10, p < .001, eta² = .120.
+   This indicates that response times differed significantly between the Lab and Phone platforms.
+   The medium effect size suggests that platform type had the strongest practical influence on performance.
+
+2. Significant Condition Effect:
+   A significant main effect of Condition was found, F(1, 1078) = 52.01, p < .001, eta² = .038.
+   This indicates that response times differed significantly between the Single and Multiple target tasks.
+   The effect size was small, suggesting a modest but meaningful effect of task condition.
+
+3. Significant Interaction Effect:
+   A significant Platform × Condition interaction was found, F(1, 1078) = 62.07, p < .001, eta² = .046.
+   This indicates that the effect of task condition depended on the platform used.
+   In other words, the difference between Single and Multiple tasks was not the same for Lab and Phone conditions.
+
+4. Effect Size Benchmarks:
+   eta² = .01  Small Effect
+   eta² = .06  Medium Effect
+   eta² = .14  Large Effect
+
+5. Assumption Checks:
+   Shapiro-Wilk and Bartlett tests were significant, indicating deviations from normality
+   and equal variances. However, given the large sample size and use of log-transformed
+   response times, ANOVA was considered sufficiently robust.
+
+6. Overall Conclusion:
+   Response time performance was influenced by platform type, task condition,
+   and their interaction. Platform differences showed the largest effect,
+   supporting the importance of device context in attention task performance.
+
+
+Non-parametric Robustness Check: Kruskal–Wallis Test
+```{r}
+#=========================================
+# KRUSKAL-WALLIS TEST ACROSS FOUR GROUPS
+#=========================================
+
+# Ensure group variable exists
+df <- df %>%
+  mutate(
+    Group = interaction(Platform, Condition, sep = "_")
+  )
+
+# Run Kruskal-Wallis test on raw IRT
+kw_model <- kruskal.test(IRT ~ Group, data = df)
+
+kw_model
+```
+Because assumption checks indicated deviations from normality and homogeneity of variance, a supplementary Kruskal–Wallis test was conducted across the four experimental groups. The test was significant, $\chi^2$(3) = 168.1, p < .001, indicating that response time distributions differed across groups. This result is consistent with the ANOVA findings and supports the robustness of the observed group differences.
+
+```{r}
+pairwise.wilcox.test(
+  df$IRT,
+  df$Group,
+  p.adjust.method = "bonferroni"
+)
+```
+Pairwise Wilcoxon rank-sum tests with Bonferroni correction showed that the Phone-Single group differed significantly from Lab-Multiple, Phone-Multiple, and Lab-Single conditions (all p < .001). No significant differences were observed among Lab-Multiple, Lab-Single, and Phone-Multiple groups (all adjusted p = 1.00). These findings mirror the Tukey post hoc results and further support the robustness of the observed group pattern.
+
+
