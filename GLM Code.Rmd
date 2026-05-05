@@ -1,0 +1,354 @@
+---
+title: "Project 2"
+author: "S Supraja"
+date: "2026-04-21"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(readr)
+library(dplyr)
+library(purrr)
+library(stringr)
+library(ggplot2)
+```
+
+
+```{r}
+# Folder paths (UPDATE if needed)
+multiple_phone_folder <- "/home/supraja/BRSM/Project/Attention Task Validation/data_brsm/multiple/phone"
+single_phone_folder   <- "/home/supraja/BRSM/Project/Attention Task Validation/data_brsm/single/phone"
+
+# File lists
+multiple_phone_files <- list.files(multiple_phone_folder, pattern="\\.csv$", full.names=TRUE)
+single_phone_files   <- list.files(single_phone_folder, pattern="\\.csv$", full.names=TRUE)
+
+# Read multiple-target phone data
+multiple_phone_data <- map_df(multiple_phone_files, function(file) {
+  df <- read_csv(file, show_col_types = FALSE)
+  df$SourceFile <- basename(file)
+  df$TaskType <- "Multiple"
+  df
+})
+
+# Read single-target phone data
+single_phone_data <- map_df(single_phone_files, function(file) {
+  df <- read_csv(file, show_col_types = FALSE)
+  df$SourceFile <- basename(file)
+  df$TaskType <- "Single"
+  df
+})
+
+# Combine
+phone_raw <- bind_rows(multiple_phone_data, single_phone_data)
+```
+
+```{r}
+phone_data <- phone_raw %>%
+  mutate(
+    DeviceType = "Phone",
+    Level = as.numeric(Level),
+    InitialResponseTime_ms = as.numeric(`InitialResponseTime(ms)`),
+    SourceFile = sub("_.*", "", SourceFile)
+  ) %>%
+  filter(Completed == TRUE) %>%
+  select(SourceFile, TaskType, DeviceType, Level, InitialResponseTime_ms)
+
+head(phone_data)
+```
+
+
+```{r}
+multiple_lab_folder <- "/home/supraja/BRSM/Project/Attention Task Validation/data_brsm/multiple/lab"
+single_lab_folder   <- "/home/supraja/BRSM/Project/Attention Task Validation/data_brsm/single/lab"
+
+read_lab_data <- function(folder, task_type) {
+  
+  files <- list.files(folder, pattern="\\.csv$", full.names=TRUE)
+  
+  data_list <- lapply(files, function(file) {
+    
+    df <- read.csv(file, stringsAsFactors = FALSE)
+    
+    # 🔹 Keep only valid trials (removes junk first row automatically)
+    df <- df[!is.na(df$trials.thisN) & df$trials.thisN != "", ]
+    
+    # 🔹 Clean mouse.time
+    clean_time <- df$mouse.time
+    clean_time[clean_time == "" | clean_time == "None" | clean_time == "[]"] <- NA
+    
+    # Extract first RT
+    first_rt <- as.numeric(sub("\\[([0-9.]+).*", "\\1", clean_time))
+    
+    data.frame(
+      SourceFile = sub("_.*", "", basename(file)),
+      TaskType = task_type,
+      DeviceType = "Lab",
+      Level = as.numeric(df$trials.thisN),
+      InitialResponseTime_ms = first_rt * 1000
+    ) %>%
+      dplyr::filter(!is.na(InitialResponseTime_ms))   # remove bad RT rows
+  })
+  
+  bind_rows(data_list)
+}
+
+# Read lab datasets
+multiple_lab_data <- read_lab_data(multiple_lab_folder, "Multiple")
+single_lab_data   <- read_lab_data(single_lab_folder, "Single")
+
+lab_data <- bind_rows(multiple_lab_data, single_lab_data)
+head(lab_data)
+```
+
+
+```{r}
+combined_data <- bind_rows(phone_data, lab_data)
+combined_data <- combined_data %>%
+  mutate(
+    DeviceType = factor(DeviceType),
+    TaskType   = factor(TaskType),
+    Level      = as.numeric(Level)
+  ) %>%
+  filter(InitialResponseTime_ms > 0)
+
+combined_data <- combined_data %>%
+  mutate(
+    TrialIndex = ifelse(DeviceType == "Lab", Level, NA),
+    Difficulty = ifelse(DeviceType == "Phone", Level, NA)
+  )
+
+head(combined_data)
+```
+```{r}
+str(combined_data)
+summary(combined_data)
+head(combined_data)
+```
+
+
+GLM CODE:
+
+```{r}
+lab_only <- combined_data %>%
+  filter(DeviceType == "Lab")
+
+glm_lab_learning <- glm(
+  InitialResponseTime_ms ~ TaskType * TrialIndex,
+  family = Gamma(link = "log"),
+  data = lab_only
+)
+
+summary(glm_lab_learning)
+
+phone_only <- combined_data %>%
+  filter(DeviceType == "Phone")
+
+glm_phone_difficulty <- glm(
+  InitialResponseTime_ms ~ TaskType * Difficulty,
+  family = Gamma(link = "log"),
+  data = phone_only
+)
+
+summary(glm_phone_difficulty)
+```
+
+```{r}
+glm_platform <- glm(
+  InitialResponseTime_ms ~ DeviceType * TaskType,
+  family = Gamma(link = "log"),
+  data = combined_data
+)
+
+summary(glm_platform)
+```
+
+
+HYPOTHESIS PLOTS:
+
+```{r}
+
+# --- H1 Panel A: Phone GLM at mean difficulty ---
+h1_phone <- expand.grid(
+  TaskType = levels(phone_only$TaskType),
+  Difficulty = mean(phone_only$Difficulty)
+)
+
+pred_phone <- predict(glm_phone_difficulty, 
+                      newdata = h1_phone, 
+                      type = "link", 
+                      se.fit = TRUE)
+
+h1_phone$pred  <- exp(pred_phone$fit)
+h1_phone$lower <- exp(pred_phone$fit - 1.96 * pred_phone$se.fit)
+h1_phone$upper <- exp(pred_phone$fit + 1.96 * pred_phone$se.fit)
+h1_phone$Model <- "Phone GLM (at mean difficulty)"
+
+# --- H1 Panel B: Combined GLM, Lab device only ---
+h1_combined <- expand.grid(
+  DeviceType = "Lab",
+  TaskType = levels(combined_data$TaskType)
+)
+
+pred_combined <- predict(glm_platform, 
+                         newdata = h1_combined, 
+                         type = "link", 
+                         se.fit = TRUE)
+
+h1_combined$pred  <- exp(pred_combined$fit)
+h1_combined$lower <- exp(pred_combined$fit - 1.96 * pred_combined$se.fit)
+h1_combined$upper <- exp(pred_combined$fit + 1.96 * pred_combined$se.fit)
+h1_combined$Model <- "Combined GLM (Lab only)"
+
+# --- Combine and plot ---
+h1_all <- bind_rows(
+  h1_phone[, c("TaskType", "pred", "lower", "upper", "Model")],
+  h1_combined[, c("TaskType", "pred", "lower", "upper", "Model")]
+)
+
+ggplot(h1_all, aes(x = TaskType, y = pred, color = TaskType)) +
+  geom_point(size = 4) +
+  geom_errorbar(aes(ymin = lower, ymax = upper), width = 0.2) +
+  facet_wrap(~Model) +
+  geom_hline(yintercept = 0, linetype = "dashed", alpha = 0.3) +
+  labs(
+    title = "H1 (GLM): Predicted IRT by Task Type",
+    subtitle = "H1 predicted Multiple > Single — neither model supports this",
+    x = "Task Type",
+    y = "Predicted IRT (ms)",
+    color = "Task Type"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+```
+
+
+```{r}
+h2_data <- expand.grid(
+  DeviceType = levels(combined_data$DeviceType),
+  TaskType = levels(combined_data$TaskType)
+)
+
+pred <- predict(glm_platform, newdata = h2_data, type = "link", se.fit = TRUE)
+
+h2_data$fit <- pred$fit
+h2_data$se  <- pred$se.fit
+
+# Convert from log scale
+h2_data$pred  <- exp(h2_data$fit)
+h2_data$lower <- exp(h2_data$fit - 1.96 * h2_data$se)
+h2_data$upper <- exp(h2_data$fit + 1.96 * h2_data$se)
+
+ggplot(h2_data, aes(x = DeviceType, y = pred, color = TaskType, group = TaskType)) +
+  geom_point(size = 4, position = position_dodge(width = 0.3)) +
+  geom_errorbar(aes(ymin = lower, ymax = upper),
+                width = 0.2,
+                position = position_dodge(width = 0.3)) +
+  geom_line(position = position_dodge(width = 0.3)) +
+  labs(
+    title = "H2 (GLM): Platform Differences in Response Time",
+    x = "Device Type",
+    y = "Predicted Response Time (ms)",
+    color = "Task Type"
+  ) +
+  theme_minimal()
+```
+
+
+```{r}
+h3_data <- expand.grid(
+  TrialIndex = seq(min(lab_only$TrialIndex), max(lab_only$TrialIndex), length.out = 50),
+  TaskType = levels(lab_only$TaskType)
+)
+
+pred <- predict(glm_lab_learning, newdata = h3_data, type = "link", se.fit = TRUE)
+
+h3_data$fit <- pred$fit
+h3_data$se  <- pred$se.fit
+
+# Back-transform from log scale
+h3_data$pred  <- exp(h3_data$fit)
+h3_data$lower <- exp(h3_data$fit - 1.96 * h3_data$se)
+h3_data$upper <- exp(h3_data$fit + 1.96 * h3_data$se)
+
+ggplot(h3_data, aes(x = TrialIndex, y = pred, color = TaskType)) +
+  geom_line(linewidth = 1.5) +
+  geom_ribbon(aes(ymin = lower, ymax = upper, fill = TaskType), alpha = 0.2, color = NA) +
+  labs(
+    title = "H3 (GLM): Learning Effect Across Trials",
+    x = "Trial Index",
+    y = "Predicted Response Time (ms)",
+    color = "Task Type",
+    fill = "Task Type"
+  ) +
+  theme_minimal()
+```
+
+
+```{r}
+phone_only$resid_sq <- residuals(glm_phone_difficulty, type = "response")^2
+
+glm_h4_single <- glm(resid_sq ~ Difficulty, 
+                      data = phone_only[phone_only$TaskType == "Single",],
+                      family = Gamma(link = "log"))
+
+glm_h4_multi <- glm(resid_sq ~ Difficulty, 
+                     data = phone_only[phone_only$TaskType == "Multiple",],
+                     family = Gamma(link = "log"))
+
+
+
+h4_pred <- expand.grid(
+  Difficulty = seq(min(phone_only$Difficulty), max(phone_only$Difficulty), length.out = 50),
+  TaskType = levels(phone_only$TaskType)
+)
+h4_pred$fit <- NA
+h4_pred$se  <- NA
+
+# Single
+pred_single <- predict(glm_h4_single,
+                       newdata = h4_pred[h4_pred$TaskType == "Single",],
+                       type = "link",
+                       se.fit = TRUE)
+
+h4_pred$fit[h4_pred$TaskType == "Single"] <- pred_single$fit
+h4_pred$se[h4_pred$TaskType == "Single"]  <- pred_single$se.fit
+
+# Multiple
+pred_multi <- predict(glm_h4_multi,
+                      newdata = h4_pred[h4_pred$TaskType == "Multiple",],
+                      type = "link",
+                      se.fit = TRUE)
+
+h4_pred$fit[h4_pred$TaskType == "Multiple"] <- pred_multi$fit
+h4_pred$se[h4_pred$TaskType == "Multiple"]  <- pred_multi$se.fit
+h4_pred$pred  <- exp(h4_pred$fit)
+h4_pred$lower <- exp(h4_pred$fit - 1.96 * h4_pred$se)
+h4_pred$upper <- exp(h4_pred$fit + 1.96 * h4_pred$se)
+
+ggplot() +
+  geom_point(data = phone_only,
+             aes(x = Difficulty, y = resid_sq),
+             alpha = 0.2) +
+  geom_line(data = h4_pred,
+            aes(x = Difficulty, y = pred, color = TaskType),
+            linewidth = 1.5) +
+  geom_ribbon(data = h4_pred,
+              aes(x = Difficulty, ymin = lower, ymax = upper, fill = TaskType),
+              alpha = 0.2) +
+  facet_wrap(~TaskType) +
+  labs(
+    title = "H4 (GLM): Variability vs Difficulty by Task Type",
+    x = "Difficulty",
+    y = "Squared Residuals (variance proxy)"
+  ) +
+  theme_minimal()
+
+```
+
+
