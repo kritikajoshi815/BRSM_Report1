@@ -1,0 +1,552 @@
+---
+title: "Regression Analysis"
+output:
+  pdf_document: 
+    latex_engine: xelatex
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo    = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.align = "center",
+  fig.width = 7,
+  fig.height = 4.5,
+  dpi = 150
+)
+```
+
+```{r packages}
+library(tidyverse)
+library(ggplot2)
+library(dplyr)
+library(stringr)
+library(knitr)
+library(kableExtra)
+library(broom)   
+library(car)     
+```
+
+```{r load-data}
+# Running descriptive_statistics.Rmd first to generate cleaned_data.rds
+data_list <- readRDS("cleaned_data.rds")
+
+lab_multi_clean    <- data_list$lab_multi_clean
+lab_single_clean   <- data_list$lab_single_clean
+phone_multi_clean  <- data_list$phone_multi_clean
+phone_single_clean <- data_list$phone_single_clean
+
+lab_multi_clean$irt_ms  <- as.numeric(lab_multi_clean$irt_ms)
+lab_single_clean$irt_ms <- as.numeric(lab_single_clean$irt_ms)
+
+phone_multi_clean  <- phone_multi_clean  %>%
+  mutate(across(c(irt_ms, false_alarms, hit_rate, avg_inter_ms, Level), as.numeric))
+phone_single_clean <- phone_single_clean %>%
+  mutate(across(c(irt_ms, false_alarms, hit_rate, avg_inter_ms, Level), as.numeric))
+```
+
+
+# Part 1: Phone — IRT vs Difficulty Level
+
+## 1.1 Data Preparation
+
+```{r phone-prep}
+phone_reg <- bind_rows(
+  phone_single_clean %>% mutate(Condition = "Single"),
+  phone_multi_clean  %>% mutate(Condition = "Multiple")
+) %>%
+  filter(!is.na(irt_ms), !is.na(Level)) %>%
+  mutate(
+    Level     = as.numeric(Level),
+    Condition = factor(Condition, levels = c("Multiple", "Single"))  # Multiple = reference
+  )
+
+cat("Phone rows for regression:", nrow(phone_reg), "\n")
+cat("Level range:", min(phone_reg$Level), "to", max(phone_reg$Level), "\n")
+```
+
+## 1.2 Simple Linear Regression: Single-Target Condition
+
+We got a strong positive correlation (ρ = 0.572) between difficulty and IRT for the single-target phone condition. Regression quantifies this: how many milliseconds does IRT increase per difficulty level?
+
+```{r phone-single-regression}
+phone_single_reg <- phone_reg %>% filter(Condition == "Single")
+
+model_phone_single <- lm(irt_ms ~ Level, data = phone_single_reg)
+
+summary(model_phone_single)
+```
+
+```{r phone-single-tidy}
+tidy_ps <- tidy(model_phone_single, conf.int = TRUE) %>% 
+  mutate(term = gsub("\\(Intercept\\)", "Intercept", term))
+
+kable(
+  tidy_ps %>%
+    select(term, estimate, std.error, statistic, p.value, conf.low, conf.high) %>%
+    mutate(across(where(is.numeric), ~round(., 3))),
+  caption = "Regression: IRT ~ Difficulty Level (Phone, Single-Target)",
+  col.names = c("Term", "Estimate (ms)", "SE", "t", "p-value", "95% CI Low", "95% CI High")
+) %>%
+  kable_styling(latex_options = c("striped"), full_width = FALSE)
+```
+
+```{r phone-single-fit}
+glance_ps <- glance(model_phone_single)
+cat("R-squared:         ", round(glance_ps$r.squared,     3), "\n")
+cat("Adjusted R-squared:", round(glance_ps$adj.r.squared, 3), "\n")
+cat("F-statistic:", round(glance_ps$statistic, 2),
+    "  p-value:", format(glance_ps$p.value, scientific = TRUE, digits = 3), "\n")
+```
+
+**Interpretation:** The slope estimate tells us how many milliseconds IRT increases for each one-unit increase in difficulty level. R² tells us what proportion of IRT variance is explained by difficulty alone. The F-test assesses whether the model as a whole is significantly better than a null (intercept-only) model.
+
+## 1.3 Simple Linear Regression: Multiple-Target Condition
+
+
+```{r phone-multi-regression}
+phone_multi_reg <- phone_reg %>% filter(Condition == "Multiple")
+
+model_phone_multi <- lm(irt_ms ~ Level, data = phone_multi_reg)
+
+tidy_pm <- tidy(model_phone_multi, conf.int = TRUE) %>%
+  mutate(term = gsub("\\(Intercept\\)", "Intercept", term))
+
+kable(
+  tidy_pm %>%
+    select(term, estimate, std.error, statistic, p.value, conf.low, conf.high) %>%
+    mutate(across(where(is.numeric), ~round(., 3))),
+  caption = "Regression: IRT ~ Difficulty Level (Phone, Multiple-Target)",
+  col.names = c("Term", "Estimate (ms)", "SE", "t", "p-value", "95% CI Low", "95% CI High")
+) %>%
+  kable_styling(latex_options = c("striped"), full_width = FALSE)
+
+glance_pm <- glance(model_phone_multi)
+cat("R-squared:", round(glance_pm$r.squared, 3), "\n")
+```
+
+**Interpretation:** A non-significant slope and near-zero R² would confirm that difficulty does not linearly predict IRT in the multiple-target condition — consistent with the Spearman result from Report 1. This supports the idea that having multiple targets offsets the effect of increasing display complexity on initial detection.
+
+## 1.4 Multiple Regression: IRT ~ Difficulty + Condition (Phone)
+
+
+```{r phone-multiple-regression}
+model_phone_combined <- lm(irt_ms ~ Level + Condition, data = phone_reg)
+
+tidy_pc <- tidy(model_phone_combined, conf.int = TRUE) %>%
+  mutate(term = gsub("\\(Intercept\\)", "Intercept", term))
+
+kable(
+  tidy_pc %>%
+    select(term, estimate, std.error, statistic, p.value, conf.low, conf.high) %>%
+    mutate(across(where(is.numeric), ~round(., 3))),
+  caption = "Multiple Regression: IRT ~ Difficulty Level + Condition (Phone)",
+  col.names = c("Term", "Estimate (ms)", "SE", "t", "p-value", "95% CI Low", "95% CI High")
+) %>%
+  kable_styling(latex_options = c("striped"), full_width = FALSE)
+
+glance_pc <- glance(model_phone_combined)
+cat("R-squared:         ", round(glance_pc$r.squared,     3), "\n")
+cat("Adjusted R-squared:", round(glance_pc$adj.r.squared, 3), "\n")
+cat("F-statistic:", round(glance_pc$statistic, 2),
+    "  p-value:", format(glance_pc$p.value, scientific = TRUE, digits = 3), "\n")
+```
+
+**Interpretation:** The coefficient for `ConditionSingle` tells us how much higher IRT is in the single-target condition compared to multiple-target, *holding difficulty level constant*. This directly quantifies the condition effect seen in Figure 5a of Report 1. We use Adjusted R² here rather than R² because adding a predictor always inflates R² — Adjusted R² penalises for model complexity and is the honest measure of fit improvement.
+
+### 1.4.1 Model Comparison: Does Adding Condition Improve the Model?
+
+
+```{r phone-model-comparison}
+# AIC comparison
+aic_table <- AIC(model_phone_single, model_phone_combined)
+cat("AIC – Simple (IRT ~ Level only):          ", round(AIC(model_phone_single), 2), "\n")
+cat("AIC – Combined (IRT ~ Level + Condition):", round(AIC(model_phone_combined), 2), "\n")
+cat("\nLower AIC = better model after accounting for complexity.\n")
+```
+
+## 1.5 Visualisation: Regression Lines on Phone Data
+
+```{r phone-regression-plot, fig.width=9, fig.height=5, out.width="\\textwidth", fig.cap="Linear regression of IRT on difficulty level by condition (phone platform). Faint points show individual trials (jittered); solid line = OLS regression fit; shaded band = 95% CI; coloured circles with white border = per-level median IRT, connecting to Report 1 Figure 5a. Free y-scale per panel so each condition's variation fills the panel."}
+
+cond_colours <- c("Single" = "#2E9B9B", "Multiple" = "#C0504D")
+
+phone_medians <- phone_reg %>%
+  group_by(Level, Condition) %>%
+  summarise(median_irt = median(irt_ms, na.rm = TRUE), .groups = "drop")
+
+y_cap      <- 8000
+n_excluded <- sum(phone_reg$irt_ms > y_cap, na.rm = TRUE)
+n_total    <- sum(!is.na(phone_reg$irt_ms))
+
+ggplot(phone_reg, aes(x = Level, y = irt_ms, colour = Condition, fill = Condition)) +
+
+  geom_jitter(
+    data   = phone_reg %>% filter(irt_ms <= y_cap),
+    width  = 0.28, height = 0,
+    shape  = 16, size = 1.1, alpha = 0.14
+  ) +
+
+  geom_smooth(
+    method = "lm", se = TRUE,
+    linewidth = 1.25, alpha = 0.15
+  ) +
+
+  geom_point(
+    data   = phone_medians,
+    aes(x = Level, y = median_irt, fill = Condition),
+    shape  = 21,        # filled circle with explicit border
+    size   = 3.2,
+    colour = "white",   # border colour
+    stroke = 1.4        # border thickness
+  ) +
+
+  facet_wrap(~Condition, scales = "free_y") +
+
+  scale_colour_manual(values = cond_colours) +
+  scale_fill_manual(  values = cond_colours) +
+  scale_x_continuous(breaks = seq(1, 15, by = 2)) +
+  scale_y_continuous(labels = scales::comma_format()) +
+  coord_cartesian(ylim = c(0, y_cap)) +
+
+  labs(
+    title    = "IRT vs Difficulty Level — Linear Regression (Phone Platform)",
+    subtitle = paste0(
+      "Line = OLS fit  \u2502  Band = 95% CI  \u2502  ",
+      "Circles = per-level median IRT  \u2502  Y-axis capped at 8,000 ms"
+    ),
+    x       = "Difficulty Level",
+    y       = "Initial Response Time (ms)",
+    caption = paste0(
+      n_excluded, " of ", n_total, " observations (",
+      round(100 * n_excluded / n_total, 1),
+      "%) exceed 8,000 ms and are not shown; regression was fitted on the full dataset"
+    )
+  ) +
+
+  theme_classic(base_size = 11) +
+  theme(
+    plot.title         = element_text(face = "bold", size = 13, hjust = 0),
+    plot.subtitle      = element_text(size = 8.5, colour = "grey35", hjust = 0,
+                                      margin = margin(b = 8)),
+    plot.caption       = element_text(size = 7.5, colour = "grey50", hjust = 0,
+                                      margin = margin(t = 8)),
+    strip.text         = element_text(face = "bold", size = 11),
+    strip.background   = element_rect(fill = "#EFEFEF", colour = NA),
+    panel.grid.major.y = element_line(colour = "grey91", linewidth = 0.4),
+    axis.line          = element_line(colour = "grey55"),
+    axis.ticks         = element_line(colour = "grey55"),
+    legend.position    = "none"
+  )
+
+ggsave("figures/reg1_phone_irt_difficulty.jpeg", width = 9, height = 5, dpi = 180)
+```
+
+---
+
+# Part 2: Lab — IRT vs Trial Number (Learning Effect)
+
+
+## 2.1 Data Preparation
+
+```{r lab-prep}
+lab_reg <- bind_rows(
+  lab_single_clean %>% mutate(Condition = "Single"),
+  lab_multi_clean  %>% mutate(Condition = "Multiple")
+) %>%
+  mutate(trial_num = as.numeric(`trials.thisN`)) %>%
+  filter(!is.na(irt_ms), !is.na(trial_num))
+
+cat("Lab rows for regression:", nrow(lab_reg), "\n")
+cat("Trial range:", min(lab_reg$trial_num), "to", max(lab_reg$trial_num), "\n")
+```
+
+## 2.2 Regression by Condition
+
+```{r lab-regression-single}
+lab_single_r <- lab_reg %>% filter(Condition == "Single")
+lab_multi_r  <- lab_reg %>% filter(Condition == "Multiple")
+
+model_lab_single <- lm(irt_ms ~ trial_num, data = lab_single_r)
+model_lab_multi  <- lm(irt_ms ~ trial_num, data = lab_multi_r)
+
+# Single-target
+cat("=== Lab Single-Target ===\n")
+tidy_ls <- tidy(model_lab_single, conf.int = TRUE) %>%
+  mutate(term = gsub("\\(Intercept\\)", "Intercept", term))
+kable(
+  tidy_ls %>%
+    select(term, estimate, std.error, statistic, p.value, conf.low, conf.high) %>%
+    mutate(across(where(is.numeric), ~round(., 3))),
+  caption = "Regression: IRT ~ Trial Number (Lab, Single-Target)",
+  col.names = c("Term", "Estimate (ms)", "SE", "t", "p-value", "95% CI Low", "95% CI High")
+) %>%
+  kable_styling(latex_options = c("striped"), full_width = FALSE)
+
+glance_ls <- glance(model_lab_single)
+cat("R-squared:", round(glance_ls$r.squared, 3), "\n\n")
+```
+
+```{r lab-regression-multi}
+# Multiple-target
+cat("=== Lab Multiple-Target ===\n")
+tidy_lm <- tidy(model_lab_multi, conf.int = TRUE) %>%
+  mutate(term = gsub("\\(Intercept\\)", "Intercept", term))
+kable(
+  tidy_lm %>%
+    select(term, estimate, std.error, statistic, p.value, conf.low, conf.high) %>%
+    mutate(across(where(is.numeric), ~round(., 3))),
+  caption = "Regression: IRT ~ Trial Number (Lab, Multiple-Target)",
+  col.names = c("Term", "Estimate (ms)", "SE", "t", "p-value", "95% CI Low", "95% CI High")
+) %>%
+  kable_styling(latex_options = c("striped"), full_width = FALSE)
+
+glance_lm <- glance(model_lab_multi)
+cat("R-squared:", round(glance_lm$r.squared, 3), "\n")
+```
+
+**Interpretation:** A negative slope for `trial_num` confirms the learning effect — IRT drops by the slope estimate (ms) per trial. Comparing slopes between single- and multiple-target conditions shows whether the more demanding task benefits more from practice (consistent with Report 1 where ρ was stronger for multiple: −0.429 vs −0.245 for single).
+
+## 2.3 Visualisation: Regression Lines on Lab Data
+
+```{r lab-regression-plot, fig.width=9, fig.height=5, out.width="\\textwidth", fig.cap="Linear regression of IRT on trial number by condition (lab platform). Faint points show individual trials (jittered horizontally since trial numbers are integers); solid line = OLS fit; shaded band = 95% CI; coloured circles with white border = per-trial median IRT. Free y-scale per panel reveals the steeper learning slope in the Multiple condition."}
+
+lab_medians <- lab_reg %>%
+  group_by(trial_num, Condition) %>%
+  summarise(median_irt = median(irt_ms, na.rm = TRUE), .groups = "drop")
+
+y_cap_lab  <- 4000
+n_exc_lab  <- sum(lab_reg$irt_ms > y_cap_lab, na.rm = TRUE)
+n_tot_lab  <- sum(!is.na(lab_reg$irt_ms))
+
+ggplot(lab_reg, aes(x = trial_num, y = irt_ms, colour = Condition, fill = Condition)) +
+
+  geom_jitter(
+    data   = lab_reg %>% filter(irt_ms <= y_cap_lab),
+    width  = 0.3, height = 0,
+    shape  = 16, size = 1.1, alpha = 0.14
+  ) +
+
+  geom_smooth(
+    method = "lm", se = TRUE,
+    linewidth = 1.25, alpha = 0.15
+  ) +
+
+  geom_point(
+    data   = lab_medians %>% filter(median_irt <= y_cap_lab),
+    aes(x = trial_num, y = median_irt, fill = Condition),
+    shape  = 21,
+    size   = 3.2,
+    colour = "white",
+    stroke = 1.4
+  ) +
+
+  facet_wrap(~Condition, scales = "free_y") +
+
+  scale_colour_manual(values = cond_colours) +
+  scale_fill_manual(  values = cond_colours) +
+  scale_x_continuous(
+    breaks = seq(0, max(lab_reg$trial_num, na.rm = TRUE), by = 2),
+    labels = function(x) x + 1   # display as Trial 1 … not Trial 0
+  ) +
+  scale_y_continuous(labels = scales::comma_format()) +
+  coord_cartesian(ylim = c(0, y_cap_lab)) +
+
+  labs(
+    title    = "IRT vs Trial Number — Linear Regression (Lab Platform)",
+    subtitle = paste0(
+      "Line = OLS fit  \u2502  Band = 95% CI  \u2502  ",
+      "Circles = per-trial median IRT  \u2502  Negative slope confirms learning effect (H3)"
+    ),
+    x       = "Trial Number",
+    y       = "Initial Response Time (ms)",
+    caption = paste0(
+      n_exc_lab, " of ", n_tot_lab, " observations (",
+      round(100 * n_exc_lab / n_tot_lab, 1),
+      "%) exceed 4,000 ms and are not shown; regression was fitted on the full dataset"
+    )
+  ) +
+
+  theme_classic(base_size = 11) +
+  theme(
+    plot.title         = element_text(face = "bold", size = 13, hjust = 0),
+    plot.subtitle      = element_text(size = 8.5, colour = "grey35", hjust = 0,
+                                      margin = margin(b = 8)),
+    plot.caption       = element_text(size = 7.5, colour = "grey50", hjust = 0,
+                                      margin = margin(t = 8)),
+    strip.text         = element_text(face = "bold", size = 11),
+    strip.background   = element_rect(fill = "#EFEFEF", colour = NA),
+    panel.grid.major.y = element_line(colour = "grey91", linewidth = 0.4),
+    axis.line          = element_line(colour = "grey55"),
+    axis.ticks         = element_line(colour = "grey55"),
+    legend.position    = "none"
+  )
+
+ggsave("figures/reg2_lab_irt_trial.jpeg", width = 9, height = 5, dpi = 180)
+```
+
+---
+
+# Part 3: Regression Assumption Checks
+
+## 3.1 Normality of Residuals
+
+
+```{r normality-phone, fig.cap="Normality diagnostics for Phone Single-Target model."}
+par(mfrow = c(1, 2))
+plot(model_phone_single, which = 2, id.n = 0, main = "Normal Q-Q (Phone Single)")
+hist(residuals(model_phone_single), breaks = 30,
+     main = "Residuals (Phone Single)", xlab = "Residual (ms)", col = "#2E9B9B80")
+par(mfrow = c(1, 1))
+```
+
+```{r shapiro-phone}
+resids_ps <- residuals(model_phone_single)
+if (length(resids_ps) > 5000) resids_ps <- sample(resids_ps, 5000)
+sw_ps <- shapiro.test(resids_ps)
+cat("Shapiro-Wilk (Phone Single):\n")
+cat("  W =", round(sw_ps$statistic, 4), "  p =", format(sw_ps$p.value, scientific = TRUE, digits = 3), "\n")
+```
+
+```{r normality-lab, fig.cap="Normality diagnostics for Lab Single-Target model."}
+par(mfrow = c(1, 2))
+plot(model_lab_single, which = 2, id.n = 0, main = "Normal Q-Q (Lab Single)")
+hist(residuals(model_lab_single), breaks = 30,
+     main = "Residuals (Lab Single)", xlab = "Residual (ms)", col = "#E0707080")
+par(mfrow = c(1, 1))
+```
+
+```{r shapiro-lab}
+resids_ls <- residuals(model_lab_single)
+sw_ls <- shapiro.test(resids_ls)
+cat("Shapiro-Wilk (Lab Single):\n")
+cat("  W =", round(sw_ls$statistic, 4), "  p =", format(sw_ls$p.value, scientific = TRUE, digits = 3), "\n")
+cat("\nIf p < 0.05: residuals are NOT normally distributed.\n")
+cat("Given the right-skewed IRT distributions reported in Report 1,\n")
+cat("a GLM with Gamma family (Section 6.3) is planned as the formal model.\n")
+```
+
+## 3.2 Homogeneity of Variance
+
+
+```{r homoscedasticity-phone, fig.cap="Scale-Location plot for Phone Single-Target model. A roughly flat red line indicates constant variance."}
+plot(model_phone_single, which = 3, id.n = 0, main = "Scale-Location (Phone Single)")
+```
+
+```{r ncvtest-phone}
+ncvTest(model_phone_single)
+```
+
+```{r homoscedasticity-lab, fig.cap="Scale-Location plot for Lab Single-Target model."}
+plot(model_lab_single, which = 3, id.n = 0, main = "Scale-Location (Lab Single)")
+```
+
+```{r ncvtest-lab}
+ncvTest(model_lab_single)
+```
+
+**Interpretation:** A significant ncvTest (p < 0.05) indicates heteroscedasticity — variance is not constant across fitted values. Given that Report 1 showed IRT distributions are strongly right-skewed with extreme outliers (Phone-Single reaching 14,711 ms), we expect this assumption to be violated. If so, the linear regression coefficient estimates are still unbiased but the SE-based p-values and CIs should be interpreted cautiously. This reinforces that the GLM with Gamma distribution (planned in Section 6.3 of Report 1) is the more appropriate formal model for this data.
+
+## 3.3 Outlier Influence: Cook's Distance
+
+```{r cooks-phone, fig.cap="Cook's distance for Phone Single-Target model. Values > 1 would indicate highly influential observations."}
+plot(model_phone_single, which = 4, main = "Cook's Distance (Phone Single)")
+```
+
+```{r cooks-lab, fig.cap="Cook's distance for Lab Single-Target model."}
+plot(model_lab_single, which = 4, main = "Cook's Distance (Lab Single)")
+```
+
+```{r cooks-summary}
+cooks_ps <- cooks.distance(model_phone_single)
+cooks_ls <- cooks.distance(model_lab_single)
+
+cat("Phone Single — observations with Cook's D > 1:", sum(cooks_ps > 1), "\n")
+cat("Lab Single   — observations with Cook's D > 1:", sum(cooks_ls > 1), "\n")
+cat("\nIf influential points exist, re-run the model with those removed\n")
+cat("and compare coefficients to assess their impact.\n")
+```
+
+## 3.4 Collinearity Check for the Combined Model
+
+
+```{r vif}
+cat("VIF for combined model (IRT ~ Level + Condition):\n")
+vif(model_phone_combined)
+cat("\nVIF close to 1 indicates no problematic collinearity between Level and Condition.\n")
+```
+
+**Interpretation:** Level and Condition are not expected to be highly collinear because difficulty level varies independently within each condition on the phone platform. Low VIF confirms it is safe to interpret each predictor's coefficient independently.
+
+---
+
+# Summary Table: All Regression Models
+
+```{r summary-table}
+summary_df <- data.frame(
+  Model = c(
+    "Phone Single: IRT ~ Level",
+    "Phone Multiple: IRT ~ Level",
+    "Phone Combined: IRT ~ Level + Condition",
+    "Lab Single: IRT ~ Trial",
+    "Lab Multiple: IRT ~ Trial"
+  ),
+  R2 = c(
+    round(glance_ps$r.squared, 3),
+    round(glance_pm$r.squared, 3),
+    round(glance_pc$r.squared, 3),
+    round(glance_ls$r.squared, 3),
+    round(glance_lm$r.squared, 3)
+  ),
+  Adj_R2 = c(
+    round(glance_ps$adj.r.squared, 3),
+    round(glance_pm$adj.r.squared, 3),
+    round(glance_pc$adj.r.squared, 3),
+    round(glance_ls$adj.r.squared, 3),
+    round(glance_lm$adj.r.squared, 3)
+  ),
+  F_p = c(
+    format(glance_ps$p.value, scientific = TRUE, digits = 2),
+    format(glance_pm$p.value, scientific = TRUE, digits = 2),
+    format(glance_pc$p.value, scientific = TRUE, digits = 2),
+    format(glance_ls$p.value, scientific = TRUE, digits = 2),
+    format(glance_lm$p.value, scientific = TRUE, digits = 2)
+  ),
+  Key_Finding = c(
+    "Difficulty significantly predicts IRT (extends H4 finding)",
+    "No meaningful relationship — consistent with rho = -0.028",
+    "Condition is significant predictor after controlling for difficulty",
+    "Trial number negatively predicts IRT — confirms learning effect (H3)",
+    "Steeper learning slope than single-target (stronger practice benefit)"
+  )
+)
+
+kable(
+  summary_df,
+  format = "latex",
+  booktabs = TRUE,
+  longtable = TRUE,
+  caption = "Summary of all regression models",
+  col.names = c("Model", "R²", "Adj. R²", "F p-value", "Key Finding")
+) %>%
+  column_spec(1, width = "4cm") %>%   # Model column
+  column_spec(5, width = "8cm") %>%   # Key Finding (IMPORTANT)
+  kable_styling(latex_options = c("repeat_header"))
+```
+
+---
+
+# Discussion
+
+The regression analyses extend the Report 1 correlational findings in three concrete ways:
+
+**Phone platform (difficulty effect):** For single-target trials, difficulty level is a significant positive predictor of IRT, with regression quantifying the exact slope (ms per level) that the Spearman correlation could not provide. The near-zero slope and R² for the multiple-target condition confirms that additional targets buffer the effect of increasing display complexity on initial detection — a finding now backed by both a non-significant slope coefficient and a model that explains negligible variance. The combined model shows that even after controlling for difficulty, being in the single-target condition is associated with substantially higher IRT, directly quantifying the platform × condition interaction observed in Figure 2a of Report 1.
+
+**Lab platform (learning effect):** Negative slopes for both conditions formally confirm H3 — IRT decreases linearly with trial progression. Comparing slopes between conditions reveals whether the more attentionally demanding multiple-target task benefits more from practice.
+
+**Assumption violations:** Given that Report 1 documented strongly right-skewed IRT distributions with extreme outliers, it is expected that the normality and homoscedasticity assumptions of linear regression will be violated. This does not invalidate the direction or approximate magnitude of the effects but does mean that formal inference (p-values, CIs) from these linear models should be treated as preliminary. The planned GLM with Gamma distribution (Section 6.3 of Report 1) addresses these violations directly and will serve as the confirmatory analysis.
+
+---
+
+*Figures saved to: `figures/reg1_phone_irt_difficulty.jpeg`, `figures/reg2_lab_irt_trial.jpeg`*
